@@ -7,7 +7,7 @@
 
 An MCP server for Basecamp 3. It lets MCP-capable clients such as Codex, Cursor, and Claude Desktop read and manage Basecamp projects through OAuth-authenticated Basecamp API calls.
 
-The main server is [`basecamp_fastmcp.py`](basecamp_fastmcp.py). It uses the official `mcp.server.fastmcp` Python SDK and exposes 75 tools covering projects, todos, message boards, campfires, card tables, inbox forwards, documents, uploads, comments, events, webhooks, and search.
+The main server is [`basecamp_fastmcp.py`](basecamp_fastmcp.py). It uses the official `mcp.server.fastmcp` Python SDK and exposes 76 tools covering projects, todos, message boards, campfires, card tables, inbox forwards, documents, uploads, comments, events, webhooks, and search.
 
 ## What It Can Do
 
@@ -222,6 +222,13 @@ The FastMCP server exposes 75 tools.
 - `create_attachment`
 - `get_uploads`
 - `get_upload`
+- `download_attachment` — download an inline comment/message attachment by its
+  ``content_attachments[].download_url`` and return it as MCP content (image
+  or embedded blob). Use this for files embedded into a comment or message
+  body. For files that are their own Upload recording in a vault ("Docs &
+  Files"), the matching tool is the upload-download path (resolves through
+  the ``/uploads/{id}`` endpoint). Inline attachments are ``Attachment``
+  objects with their own IDs and cannot be resolved through ``/uploads``.
 - `get_documents`
 - `get_document`
 - `create_document`
@@ -243,6 +250,7 @@ The FastMCP server exposes 75 tools.
 - "Show me the card table columns for project 123456."
 - "Move this card to the Done column."
 - "List the latest uploads in this project's vault."
+- "Download the screenshot attached to that comment so you can read it."
 
 ## Architecture
 
