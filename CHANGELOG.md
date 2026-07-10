@@ -16,6 +16,18 @@ All notable changes to this project are documented here. The format is based on 
 
 ### Fixed
 
+- All list helpers now follow Basecamp's `Link` header pagination via a shared
+  `get_all_pages()` helper. Previously only `get_todos`, `get_todolist_groups`,
+  `get_messages`, `get_forwards`, and `get_inbox_replies` paginated; the other
+  list endpoints (`get_projects`, `get_todolists`, `get_people`, `get_campfires`,
+  `get_campfire_lines`, `get_message_categories`, `get_schedule_entries`,
+  `get_cards`, `get_events`, `get_webhooks`, `get_documents`, `get_uploads`)
+  silently returned only the first page (15 items) — accounts with more than
+  15 projects saw a truncated project list. Same root cause as #12, applied
+  across the board.
+- `get_schedule_entries` now discovers the schedule ID from the project dock
+  (like `get_todoset`). It previously compared a `requests.Response` object
+  against `list` and therefore always returned an empty list.
 - Todo and card completion helpers now treat Basecamp's successful `204 No Content`
   responses as completed instead of raising an error.
 - Card-step completion now uses Basecamp's documented card-table step completions

@@ -59,6 +59,9 @@ class BasecampClient:
     Client for interacting with Basecamp 3 API using Basic Authentication or OAuth 2.0.
     """
 
+    # Upper bound for get_all_pages(); guards against endless pagination.
+    MAX_PAGES = 1000
+
     def __init__(self, username=None, password=None, account_id=None, user_agent=None,
                  access_token=None, auth_mode="basic"):
         """
@@ -125,6 +128,52 @@ class BasecampClient:
         url = f"{self.base_url}/{endpoint}"
         return requests.get(url, auth=self.auth, headers=self.headers, params=params)
 
+    def get_all_pages(self, endpoint, params=None, error_label="items"):
+        """Fetch all pages of a list endpoint, following pagination.
+
+        Basecamp paginates list endpoints (commonly 15 items per page). This
+        helper follows pagination via the `page` query parameter and the HTTP
+        `Link` header, aggregating all pages before returning the combined
+        list.
+
+        Args:
+            endpoint (str): API endpoint returning a JSON array
+            params (dict, optional): Extra query parameters
+            error_label (str): Label used in the error message on failure
+
+        Returns:
+            list: All items across all pages
+
+        Raises:
+            Exception: On a non-200 response, or if pagination exceeds
+                MAX_PAGES (guards against a malformed API response that
+                keeps advertising a next page forever).
+        """
+        all_items = []
+        page = 1
+
+        while True:
+            if page > self.MAX_PAGES:
+                raise Exception(
+                    f"Failed to get {error_label}: pagination exceeded "
+                    f"{self.MAX_PAGES} pages for endpoint {endpoint}")
+            page_params = dict(params or {}, page=page)
+            response = self.get(endpoint, params=page_params)
+            if response.status_code != 200:
+                raise Exception(f"Failed to get {error_label}: {response.status_code} - {response.text}")
+
+            page_items = response.json() or []
+            all_items.extend(page_items)
+
+            # Check for next page using Link header or by empty result
+            link_header = response.headers.get("Link", "")
+            if not page_items or 'rel="next"' not in link_header:
+                break
+
+            page += 1
+
+        return all_items
+
     def post(self, endpoint, data=None):
         """Make a POST request to the Basecamp API."""
         url = f"{self.base_url}/{endpoint}"
@@ -147,12 +196,8 @@ class BasecampClient:
 
     # Project methods
     def get_projects(self):
-        """Get all projects."""
-        response = self.get('projects.json')
-        if response.status_code == 200:
-            return response.json()
-        else:
-            raise Exception(f"Failed to get projects: {response.status_code} - {response.text}")
+        """Get all projects, handling pagination."""
+        return self.get_all_pages('projects.json', error_label="projects")
 
     def get_project(self, project_id):
         """Get a specific project by ID."""
@@ -177,12 +222,10 @@ class BasecampClient:
         todoset = self.get_todoset(project_id)
         todoset_id = todoset['id']
 
-        # Then get all todolists in this todoset
-        response = self.get(f'buckets/{project_id}/todosets/{todoset_id}/todolists.json')
-        if response.status_code == 200:
-            return response.json()
-        else:
-            raise Exception(f"Failed to get todolists: {response.status_code} - {response.text}")
+        # Then get all todolists in this todoset, handling pagination
+        return self.get_all_pages(
+            f'buckets/{project_id}/todosets/{todoset_id}/todolists.json',
+            error_label="todolists")
 
     def get_todolist(self, project_id, todolist_id):
         """Get a specific todolist."""
@@ -263,29 +306,9 @@ class BasecampClient:
         the HTTP `Link` header if present, aggregating all pages before
         returning the combined list.
         """
-        endpoint = f'buckets/{project_id}/todolists/{todolist_id}/todos.json'
-
-        all_todos = []
-        page = 1
-
-        while True:
-            response = self.get(endpoint, params={"page": page})
-            if response.status_code != 200:
-                raise Exception(f"Failed to get todos: {response.status_code} - {response.text}")
-
-            page_items = response.json() or []
-            all_todos.extend(page_items)
-
-            # Check for next page using Link header or by empty result
-            link_header = response.headers.get("Link", "")
-            has_next = 'rel="next"' in link_header if link_header else False
-
-            if not page_items or not has_next:
-                break
-
-            page += 1
-
-        return all_todos
+        return self.get_all_pages(
+            f'buckets/{project_id}/todolists/{todolist_id}/todos.json',
+            error_label="todos")
 
     def get_todo(self, project_id, todo_id):
         """Get a specific todo.
@@ -501,20 +524,9 @@ class BasecampClient:
         Returns:
             list: List of group objects
         """
-        endpoint = f'buckets/{project_id}/todolists/{todolist_id}/groups.json'
-        all_groups = []
-        page = 1
-        while True:
-            response = self.get(endpoint, params={"page": page})
-            if response.status_code != 200:
-                raise Exception(f"Failed to get todolist groups: {response.status_code} - {response.text}")
-            page_items = response.json() or []
-            all_groups.extend(page_items)
-            link_header = response.headers.get("Link", "")
-            if not page_items or 'rel="next"' not in link_header:
-                break
-            page += 1
-        return all_groups
+        return self.get_all_pages(
+            f'buckets/{project_id}/todolists/{todolist_id}/groups.json',
+            error_label="todolist groups")
 
     def create_todolist_group(self, project_id, todolist_id, name, color=None):
         """Create a new group inside a todolist.
@@ -559,29 +571,20 @@ class BasecampClient:
 
     # People methods
     def get_people(self):
-        """Get all people in the account."""
-        response = self.get('people.json')
-        if response.status_code == 200:
-            return response.json()
-        else:
-            raise Exception(f"Failed to get people: {response.status_code} - {response.text}")
+        """Get all people in the account, handling pagination."""
+        return self.get_all_pages('people.json', error_label="people")
 
     # Campfire (chat) methods
     def get_campfires(self, project_id):
-        """Get the campfire for a project."""
-        response = self.get(f'buckets/{project_id}/chats.json')
-        if response.status_code == 200:
-            return response.json()
-        else:
-            raise Exception(f"Failed to get campfire: {response.status_code} - {response.text}")
+        """Get the campfires for a project, handling pagination."""
+        return self.get_all_pages(f'buckets/{project_id}/chats.json',
+                                  error_label="campfires")
 
     def get_campfire_lines(self, project_id, campfire_id):
-        """Get chat lines from a campfire."""
-        response = self.get(f'buckets/{project_id}/chats/{campfire_id}/lines.json')
-        if response.status_code == 200:
-            return response.json()
-        else:
-            raise Exception(f"Failed to get campfire lines: {response.status_code} - {response.text}")
+        """Get chat lines from a campfire, handling pagination."""
+        return self.get_all_pages(
+            f'buckets/{project_id}/chats/{campfire_id}/lines.json',
+            error_label="campfire lines")
 
     # Message board methods
     def get_message_board(self, project_id):
@@ -628,29 +631,9 @@ class BasecampClient:
             message_board = self.get_message_board(project_id)
             message_board_id = message_board['id']
 
-        endpoint = f'buckets/{project_id}/message_boards/{message_board_id}/messages.json'
-
-        all_messages = []
-        page = 1
-
-        while True:
-            response = self.get(endpoint, params={"page": page})
-            if response.status_code != 200:
-                raise Exception(f"Failed to get messages: {response.status_code} - {response.text}")
-
-            page_items = response.json() or []
-            all_messages.extend(page_items)
-
-            # Check for next page using Link header
-            link_header = response.headers.get("Link", "")
-            has_next = 'rel="next"' in link_header if link_header else False
-
-            if not page_items or not has_next:
-                break
-
-            page += 1
-
-        return all_messages
+        return self.get_all_pages(
+            f'buckets/{project_id}/message_boards/{message_board_id}/messages.json',
+            error_label="messages")
 
     def get_message(self, project_id, message_id):
         """Get a specific message.
@@ -678,12 +661,8 @@ class BasecampClient:
         Returns:
             list: Message categories with id, name, and icon
         """
-        endpoint = f'buckets/{project_id}/categories.json'
-        response = self.get(endpoint)
-        if response.status_code == 200:
-            return response.json()
-        else:
-            raise Exception(f"Failed to get message categories: {response.status_code} - {response.text}")
+        return self.get_all_pages(f'buckets/{project_id}/categories.json',
+                                  error_label="message categories")
 
     def create_message(self, project_id, subject, content, message_board_id=None, category_id=None, status="active"):
         """Create a new message on a project's message board.
@@ -757,29 +736,9 @@ class BasecampClient:
             inbox = self.get_inbox(project_id)
             inbox_id = inbox['id']
 
-        endpoint = f'buckets/{project_id}/inboxes/{inbox_id}/forwards.json'
-
-        all_forwards = []
-        page = 1
-
-        while True:
-            response = self.get(endpoint, params={"page": page})
-            if response.status_code != 200:
-                raise Exception(f"Failed to get forwards: {response.status_code} - {response.text}")
-
-            page_items = response.json() or []
-            all_forwards.extend(page_items)
-
-            # Check for next page using Link header
-            link_header = response.headers.get("Link", "")
-            has_next = 'rel="next"' in link_header if link_header else False
-
-            if not page_items or not has_next:
-                break
-
-            page += 1
-
-        return all_forwards
+        return self.get_all_pages(
+            f'buckets/{project_id}/inboxes/{inbox_id}/forwards.json',
+            error_label="forwards")
 
     def get_forward(self, project_id, forward_id):
         """Get a specific forward.
@@ -808,29 +767,9 @@ class BasecampClient:
         Returns:
             list: All replies to the forward
         """
-        endpoint = f'buckets/{project_id}/inbox_forwards/{forward_id}/replies.json'
-
-        all_replies = []
-        page = 1
-
-        while True:
-            response = self.get(endpoint, params={"page": page})
-            if response.status_code != 200:
-                raise Exception(f"Failed to get inbox replies: {response.status_code} - {response.text}")
-
-            page_items = response.json() or []
-            all_replies.extend(page_items)
-
-            # Check for next page using Link header
-            link_header = response.headers.get("Link", "")
-            has_next = 'rel="next"' in link_header if link_header else False
-
-            if not page_items or not has_next:
-                break
-
-            page += 1
-
-        return all_replies
+        return self.get_all_pages(
+            f'buckets/{project_id}/inbox_forwards/{forward_id}/replies.json',
+            error_label="inbox replies")
 
     def get_inbox_reply(self, project_id, forward_id, reply_id):
         """Get a specific inbox reply.
@@ -888,18 +827,17 @@ class BasecampClient:
         Returns:
             list: Schedule entries
         """
+        # The schedule ID is discovered from the project's dock array,
+        # following the same pattern as get_todoset().
+        project = self.get_project(project_id)
         try:
-            endpoint = f"buckets/{project_id}/schedules.json"
-            schedule = self.get(endpoint)
+            dock_item = next(_ for _ in project["dock"] if _["name"] == "schedule")
+        except (KeyError, TypeError, StopIteration):
+            return []
 
-            if isinstance(schedule, list) and len(schedule) > 0:
-                schedule_id = schedule[0]['id']
-                entries_endpoint = f"buckets/{project_id}/schedules/{schedule_id}/entries.json"
-                return self.get(entries_endpoint)
-            else:
-                return []
-        except Exception as e:
-            raise Exception(f"Failed to get schedule: {str(e)}")
+        return self.get_all_pages(
+            f"buckets/{project_id}/schedules/{dock_item['id']}/entries.json",
+            error_label="schedule entries")
 
     # Comments methods
     def get_comments(self, project_id, recording_id, page=1):
@@ -1155,12 +1093,10 @@ class BasecampClient:
 
     # Card Table Card methods
     def get_cards(self, project_id, column_id):
-        """Get all cards in a column."""
-        response = self.get(f'buckets/{project_id}/card_tables/lists/{column_id}/cards.json')
-        if response.status_code == 200:
-            return response.json()
-        else:
-            raise Exception(f"Failed to get cards: {response.status_code} - {response.text}")
+        """Get all cards in a column, handling pagination."""
+        return self.get_all_pages(
+            f'buckets/{project_id}/card_tables/lists/{column_id}/cards.json',
+            error_label="cards")
 
     def get_card(self, project_id, card_id):
         """Get a specific card."""
@@ -1319,22 +1255,15 @@ class BasecampClient:
             raise Exception(f"Failed to create attachment: {response.status_code} - {response.text}")
 
     def get_events(self, project_id, recording_id):
-        """Get events for a recording."""
-        endpoint = f"buckets/{project_id}/recordings/{recording_id}/events.json"
-        response = self.get(endpoint)
-        if response.status_code == 200:
-            return response.json()
-        else:
-            raise Exception(f"Failed to get events: {response.status_code} - {response.text}")
+        """Get events for a recording, handling pagination."""
+        return self.get_all_pages(
+            f"buckets/{project_id}/recordings/{recording_id}/events.json",
+            error_label="events")
 
     def get_webhooks(self, project_id):
-        """List webhooks for a project."""
-        endpoint = f"buckets/{project_id}/webhooks.json"
-        response = self.get(endpoint)
-        if response.status_code == 200:
-            return response.json()
-        else:
-            raise Exception(f"Failed to get webhooks: {response.status_code} - {response.text}")
+        """List webhooks for a project, handling pagination."""
+        return self.get_all_pages(f"buckets/{project_id}/webhooks.json",
+                                  error_label="webhooks")
 
     def create_webhook(self, project_id, payload_url, types=None):
         """Create a webhook for a project."""
@@ -1358,13 +1287,10 @@ class BasecampClient:
             raise Exception(f"Failed to delete webhook: {response.status_code} - {response.text}")
 
     def get_documents(self, project_id, vault_id):
-        """List documents in a vault."""
-        endpoint = f"buckets/{project_id}/vaults/{vault_id}/documents.json"
-        response = self.get(endpoint)
-        if response.status_code == 200:
-            return response.json()
-        else:
-            raise Exception(f"Failed to get documents: {response.status_code} - {response.text}")
+        """List documents in a vault, handling pagination."""
+        return self.get_all_pages(
+            f"buckets/{project_id}/vaults/{vault_id}/documents.json",
+            error_label="documents")
 
     def get_document(self, project_id, document_id):
         """Get a single document."""
@@ -1412,16 +1338,12 @@ class BasecampClient:
 
     # Upload methods
     def get_uploads(self, project_id, vault_id=None):
-        """List uploads in a project or vault."""
+        """List uploads in a project or vault, handling pagination."""
         if vault_id:
             endpoint = f"buckets/{project_id}/vaults/{vault_id}/uploads.json"
         else:
             endpoint = f"buckets/{project_id}/uploads.json"
-        response = self.get(endpoint)
-        if response.status_code == 200:
-            return response.json()
-        else:
-            raise Exception(f"Failed to get uploads: {response.status_code} - {response.text}")
+        return self.get_all_pages(endpoint, error_label="uploads")
 
     def get_upload(self, project_id, upload_id):
         """Get a single upload."""
