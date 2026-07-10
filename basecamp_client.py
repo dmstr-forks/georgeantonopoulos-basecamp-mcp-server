@@ -59,6 +59,9 @@ class BasecampClient:
     Client for interacting with Basecamp 3 API using Basic Authentication or OAuth 2.0.
     """
 
+    # Upper bound for get_all_pages(); guards against endless pagination.
+    MAX_PAGES = 1000
+
     def __init__(self, username=None, password=None, account_id=None, user_agent=None,
                  access_token=None, auth_mode="basic"):
         """
@@ -140,11 +143,20 @@ class BasecampClient:
 
         Returns:
             list: All items across all pages
+
+        Raises:
+            Exception: On a non-200 response, or if pagination exceeds
+                MAX_PAGES (guards against a malformed API response that
+                keeps advertising a next page forever).
         """
         all_items = []
         page = 1
 
         while True:
+            if page > self.MAX_PAGES:
+                raise Exception(
+                    f"Failed to get {error_label}: pagination exceeded "
+                    f"{self.MAX_PAGES} pages for endpoint {endpoint}")
             page_params = dict(params or {}, page=page)
             response = self.get(endpoint, params=page_params)
             if response.status_code != 200:

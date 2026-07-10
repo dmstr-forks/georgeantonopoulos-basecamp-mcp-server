@@ -82,7 +82,19 @@ class TestGetAllPages(unittest.TestCase):
         with patch.object(client, 'get', return_value=resp):
             with self.assertRaises(Exception) as ctx:
                 client.get_all_pages('projects.json', error_label='projects')
-        self.assertIn('Failed to get projects', str(ctx.exception))
+        self.assertEqual(
+            str(ctx.exception), 'Failed to get projects: 401 - unauthorized')
+
+    def test_persistent_next_page_hits_page_cap(self):
+        """A response that always advertises a next page raises at MAX_PAGES."""
+        client = _client()
+        with patch.object(
+                client, 'get',
+                return_value=_page([{'id': 1}], has_next=True)) as got:
+            with self.assertRaises(Exception) as ctx:
+                client.get_all_pages('projects.json', error_label='projects')
+        self.assertIn('pagination exceeded', str(ctx.exception))
+        self.assertEqual(got.call_count, BasecampClient.MAX_PAGES)
 
     def test_extra_params_are_preserved_across_pages(self):
         """Caller-supplied query params are kept on every page request."""
@@ -129,6 +141,20 @@ class TestListEndpointsPaginate(unittest.TestCase):
         with patch.object(client, 'get', side_effect=pages):
             result = client.get_cards('1', '2')
         self.assertEqual(len(result), 16)
+
+    def test_get_schedule_entries_uses_dock_schedule(self):
+        """get_schedule_entries() resolves the schedule from the project dock."""
+        client = _client()
+        entries = [{'id': 1}, {'id': 2}]
+        with patch.object(client, 'get_project',
+                          return_value={'dock': [{'name': 'schedule', 'id': 42}]}), \
+                patch.object(client, 'get_all_pages',
+                             return_value=entries) as get_all_pages:
+            result = client.get_schedule_entries('1')
+        self.assertEqual(result, entries)
+        get_all_pages.assert_called_once_with(
+            'buckets/1/schedules/42/entries.json',
+            error_label='schedule entries')
 
 
 if __name__ == '__main__':
