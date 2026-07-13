@@ -136,6 +136,15 @@ python -m pytest tests/ -v
 
 The FastMCP server exposes 79 tools.
 
+List tools (`get_projects`, `get_todos`, `get_cards`, …) return slim
+projections by default: embedded person objects become `{id, name}`, signed
+API URL fields are dropped (only the human-clickable `app_url` is kept), and
+`parent`/`bucket` references shrink to `{id, title, type}`. This keeps
+responses within MCP hosts' tool-result token limits on real accounts
+(`get_projects`: ~92% smaller). Detail tools (`get_project`, `get_todo`, …)
+always return the full payload. Set `BASECAMP_MCP_FULL_RESPONSES=1` to
+restore raw API responses on all tools.
+
 ### Projects And Search
 
 - `get_projects`

@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+### Changed
+
+- List tools now return slim projections of the Basecamp payload by default ([#36](https://github.com/georgeantonopoulos/Basecamp-MCP-Server/issues/36)): embedded person objects shrink to `{id, name}`, signed API URL fields are dropped (only the human-clickable `app_url` is kept), and `parent`/`bucket` references reduce to `{id, title, type}`. `get_projects` uses a dedicated projection (`tools` from enabled dock entries, `user_ids` from the team sample) that cuts the response by ~92% on real accounts (243k → 21k characters for 45 projects), bringing it back under MCP hosts' tool-result token limits. Detail tools (`get_project`, `get_todo`, …) keep returning the full payload, and `BasecampClient` is untouched. Set `BASECAMP_MCP_FULL_RESPONSES=1` to restore raw API responses on all tools.
+
 ### Added
 
 - `publish` option for `create_message` and `create_document`. The tools still
