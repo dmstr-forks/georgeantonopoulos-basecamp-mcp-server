@@ -6,6 +6,7 @@ All notable changes to this project are documented here. The format is based on 
 
 ### Added
 
+- Reports API tools ([bc-api sections/reports.md](https://github.com/basecamp/bc-api/blob/master/sections/reports.md)): `get_assignable_people` (`GET /reports/todos/assigned.json`), `get_person_assignments` (`GET /reports/todos/assigned/{person_id}.json` with optional `group_by: bucket|date`) and `get_overdue_todos` (`GET /reports/todos/overdue.json`). `get_person_assignments` returns one person's active, pending to-dos across all projects in a single call — previously this required iterating every project and todolist, which was slow and easy to get wrong (missed projects read as "no assignments"). The embedded `todos` list follows `Link`-header pagination defensively and merges pages into one report.
 - `publish` option for `create_message` and `create_document`. The tools still
   publish immediately by default, and callers can pass `publish: false` to omit
   `status: "active"` and create a Basecamp draft instead.
