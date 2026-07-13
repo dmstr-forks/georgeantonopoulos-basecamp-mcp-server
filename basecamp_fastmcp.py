@@ -24,6 +24,11 @@ from mcp.types import (
 # Import existing business logic
 from basecamp_client import BasecampClient
 from search_utils import BasecampSearch
+from response_slimming import (
+    maybe_slim,
+    maybe_slim_projects,
+    maybe_slim_search_results,
+)
 import token_storage
 import auth_manager
 from dotenv import load_dotenv
@@ -178,7 +183,7 @@ async def get_projects() -> Dict[str, Any]:
         return _get_auth_error_response()
     
     try:
-        projects = await _run_sync(client.get_projects)
+        projects = maybe_slim_projects(await _run_sync(client.get_projects))
         return {
             "status": "success",
             "projects": projects,
@@ -251,6 +256,7 @@ async def search_basecamp(query: str, project_id: Optional[str] = None) -> Dict[
             results["todos"] = await _run_sync(search.search_todos, query)
             results["messages"] = await _run_sync(search.search_messages, query)
 
+        results = maybe_slim_search_results(results)
         return {
             "status": "success",
             "query": query,
@@ -280,7 +286,7 @@ async def get_todolists(project_id: str) -> Dict[str, Any]:
         return _get_auth_error_response()
     
     try:
-        todolists = await _run_sync(client.get_todolists, project_id)
+        todolists = maybe_slim(await _run_sync(client.get_todolists, project_id))
         return {
             "status": "success",
             "todolists": todolists,
@@ -311,7 +317,7 @@ async def get_todos(project_id: str, todolist_id: str) -> Dict[str, Any]:
         return _get_auth_error_response()
     
     try:
-        todos = await _run_sync(client.get_todos, project_id, todolist_id)
+        todos = maybe_slim(await _run_sync(client.get_todos, project_id, todolist_id))
         return {
             "status": "success",
             "todos": todos,
@@ -644,7 +650,8 @@ async def global_search(query: str) -> Dict[str, Any]:
     
     try:
         search = BasecampSearch(client=client)
-        results = await _run_sync(search.global_search, query)
+        results = maybe_slim_search_results(
+            await _run_sync(search.global_search, query))
         return {
             "status": "success",
             "query": query,
@@ -677,7 +684,7 @@ async def get_comments(recording_id: str, project_id: str, page: int = 1) -> Dic
         return _get_auth_error_response()
 
     try:
-        result = await _run_sync(client.get_comments, project_id, recording_id, page)
+        result = maybe_slim(await _run_sync(client.get_comments, project_id, recording_id, page))
         return {
             "status": "success",
             "comments": result["comments"],
@@ -743,7 +750,7 @@ async def get_campfire_lines(project_id: str, campfire_id: str) -> Dict[str, Any
         return _get_auth_error_response()
     
     try:
-        lines = await _run_sync(client.get_campfire_lines, project_id, campfire_id)
+        lines = maybe_slim(await _run_sync(client.get_campfire_lines, project_id, campfire_id))
         return {
             "status": "success",
             "campfire_lines": lines,
@@ -803,7 +810,7 @@ async def get_messages(project_id: str, message_board_id: Optional[str] = None) 
         return _get_auth_error_response()
 
     try:
-        messages = await _run_sync(client.get_messages, project_id, message_board_id)
+        messages = maybe_slim(await _run_sync(client.get_messages, project_id, message_board_id))
         return {
             "status": "success",
             "messages": messages,
@@ -993,7 +1000,7 @@ async def get_forwards(project_id: str, inbox_id: Optional[str] = None) -> Dict[
         return _get_auth_error_response()
 
     try:
-        forwards = await _run_sync(client.get_forwards, project_id, inbox_id)
+        forwards = maybe_slim(await _run_sync(client.get_forwards, project_id, inbox_id))
         return {
             "status": "success",
             "forwards": forwards,
@@ -1056,7 +1063,7 @@ async def get_inbox_replies(project_id: str, forward_id: str) -> Dict[str, Any]:
         return _get_auth_error_response()
 
     try:
-        replies = await _run_sync(client.get_inbox_replies, project_id, forward_id)
+        replies = maybe_slim(await _run_sync(client.get_inbox_replies, project_id, forward_id))
         return {
             "status": "success",
             "replies": replies,
@@ -1150,7 +1157,7 @@ async def get_card_tables(project_id: str) -> Dict[str, Any]:
         return _get_auth_error_response()
     
     try:
-        card_tables = await _run_sync(client.get_card_tables, project_id)
+        card_tables = maybe_slim(await _run_sync(client.get_card_tables, project_id))
         return {
             "status": "success",
             "card_tables": card_tables,
@@ -1181,7 +1188,7 @@ async def get_card_table(project_id: str) -> Dict[str, Any]:
     
     try:
         card_table = await _run_sync(client.get_card_table, project_id)
-        card_table_details = await _run_sync(client.get_card_table_details, project_id, card_table['id'])
+        card_table_details = maybe_slim(await _run_sync(client.get_card_table_details, project_id, card_table['id']))
         return {
             "status": "success",
             "card_table": card_table_details
@@ -1213,7 +1220,7 @@ async def get_columns(project_id: str, card_table_id: str) -> Dict[str, Any]:
         return _get_auth_error_response()
     
     try:
-        columns = await _run_sync(client.get_columns, project_id, card_table_id)
+        columns = maybe_slim(await _run_sync(client.get_columns, project_id, card_table_id))
         return {
             "status": "success",
             "columns": columns,
@@ -1244,7 +1251,7 @@ async def get_cards(project_id: str, column_id: str) -> Dict[str, Any]:
         return _get_auth_error_response()
     
     try:
-        cards = await _run_sync(client.get_cards, project_id, column_id)
+        cards = maybe_slim(await _run_sync(client.get_cards, project_id, column_id))
         return {
             "status": "success",
             "cards": cards,
@@ -1500,7 +1507,7 @@ async def get_daily_check_ins(project_id: str, page: Optional[int] = None) -> Di
     try:
         if page is not None and not isinstance(page, int):
             page = 1
-        answers = await _run_sync(client.get_daily_check_ins, project_id, page=page or 1)
+        answers = maybe_slim(await _run_sync(client.get_daily_check_ins, project_id, page=page or 1))
         return {
             "status": "success",
             "campfire_lines": answers,
@@ -1534,7 +1541,7 @@ async def get_question_answers(project_id: str, question_id: str, page: Optional
     try:
         if page is not None and not isinstance(page, int):
             page = 1
-        answers = await _run_sync(client.get_question_answers, project_id, question_id, page=page or 1)
+        answers = maybe_slim(await _run_sync(client.get_question_answers, project_id, question_id, page=page or 1))
         return {
             "status": "success",
             "campfire_lines": answers,
@@ -1814,7 +1821,7 @@ async def get_card_steps(project_id: str, card_id: str) -> Dict[str, Any]:
         return _get_auth_error_response()
     
     try:
-        steps = await _run_sync(client.get_card_steps, project_id, card_id)
+        steps = maybe_slim(await _run_sync(client.get_card_steps, project_id, card_id))
         return {
             "status": "success",
             "steps": steps,
@@ -2065,7 +2072,7 @@ async def get_events(project_id: str, recording_id: str) -> Dict[str, Any]:
         return _get_auth_error_response()
     
     try:
-        events = await _run_sync(client.get_events, project_id, recording_id)
+        events = maybe_slim(await _run_sync(client.get_events, project_id, recording_id))
         return {
             "status": "success",
             "events": events,
@@ -2095,7 +2102,7 @@ async def get_webhooks(project_id: str) -> Dict[str, Any]:
         return _get_auth_error_response()
     
     try:
-        hooks = await _run_sync(client.get_webhooks, project_id)
+        hooks = maybe_slim(await _run_sync(client.get_webhooks, project_id))
         return {
             "status": "success",
             "webhooks": hooks,
@@ -2188,7 +2195,7 @@ async def get_documents(project_id: str, vault_id: str) -> Dict[str, Any]:
         return _get_auth_error_response()
     
     try:
-        docs = await _run_sync(client.get_documents, project_id, vault_id)
+        docs = maybe_slim(await _run_sync(client.get_documents, project_id, vault_id))
         return {
             "status": "success",
             "documents": docs,
@@ -2370,7 +2377,7 @@ async def get_uploads(project_id: str, vault_id: Optional[str] = None) -> Dict[s
         return _get_auth_error_response()
     
     try:
-        uploads = await _run_sync(client.get_uploads, project_id, vault_id)
+        uploads = maybe_slim(await _run_sync(client.get_uploads, project_id, vault_id))
         return {
             "status": "success",
             "uploads": uploads,
@@ -2664,7 +2671,7 @@ async def get_todolist_groups(project_id: str, todolist_id: str) -> Dict[str, An
         return _get_auth_error_response()
 
     try:
-        groups = await _run_sync(client.get_todolist_groups, project_id, todolist_id)
+        groups = maybe_slim(await _run_sync(client.get_todolist_groups, project_id, todolist_id))
         return {"status": "success", "groups": groups, "count": len(groups)}
     except Exception as e:
         logger.error(f"Error getting todolist groups: {e}")
