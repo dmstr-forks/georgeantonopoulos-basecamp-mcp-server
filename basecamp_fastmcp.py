@@ -10,7 +10,7 @@ import base64
 import logging
 import os
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 import anyio
 import httpx
 from mcp.server.fastmcp import FastMCP
@@ -300,7 +300,7 @@ async def get_assignable_people() -> Dict[str, Any]:
         }
 
 @mcp.tool()
-async def get_person_assignments(person_id: str, group_by: Optional[str] = None) -> Dict[str, Any]:
+async def get_person_assignments(person_id: str, group_by: Optional[Literal["bucket", "date"]] = None) -> Dict[str, Any]:
     """Get all active, pending to-dos assigned to a specific person.
 
     Cross-project report: returns the person's assignments across ALL

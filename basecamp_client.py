@@ -126,7 +126,8 @@ class BasecampClient:
     def get(self, endpoint, params=None):
         """Make a GET request to the Basecamp API."""
         url = f"{self.base_url}/{endpoint}"
-        return requests.get(url, auth=self.auth, headers=self.headers, params=params)
+        return requests.get(url, auth=self.auth, headers=self.headers, params=params,
+                            timeout=(10, 300))
 
     def get_all_pages(self, endpoint, params=None, error_label="items"):
         """Fetch all pages of a list endpoint, following pagination.
