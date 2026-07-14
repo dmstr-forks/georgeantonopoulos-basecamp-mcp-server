@@ -6,6 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a **Basecamp 3 MCP (Model Context Protocol) Server** that allows AI assistants (Cursor, Claude Desktop) to interact with Basecamp directly. It uses OAuth 2.0 for authentication and provides 75 tools for Basecamp operations.
 
+## Language
+
+All communication with upstream and anything visible on GitHub — PR titles/bodies, issue and review comments, commit messages — must be written in **English**.
+
 ## Development Commands
 
 ```bash
