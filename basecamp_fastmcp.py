@@ -6,6 +6,7 @@ This server implements the MCP (Model Context Protocol) using the official
 Anthropic FastMCP framework, replacing the custom JSON-RPC implementation.
 """
 
+import base64
 import logging
 import os
 import sys
@@ -13,6 +14,12 @@ from typing import Any, Dict, List, Optional
 import anyio
 import httpx
 from mcp.server.fastmcp import FastMCP
+from mcp.types import (
+    BlobResourceContents,
+    EmbeddedResource,
+    ImageContent,
+    TextContent,
+)
 
 # Import existing business logic
 from basecamp_client import BasecampClient
@@ -90,22 +97,76 @@ def _get_basecamp_client() -> Optional[BasecampClient]:
         logger.error(f"Error creating Basecamp client: {e}")
         return None
 
+def _error_response(error: str, message: str) -> Dict[str, Any]:
+    """Return a consistent MCP tool error response."""
+    return {
+        "status": "error",
+        "error": error,
+        "message": message,
+    }
+
+
 def _get_auth_error_response() -> Dict[str, Any]:
     """Return consistent auth error response."""
     if token_storage.is_token_expired():
-        return {
-            "error": "OAuth token expired",
-            "message": "Your Basecamp OAuth token has expired. Please re-authenticate by visiting http://localhost:8000 and completing the OAuth flow again."
-        }
-    else:
-        return {
-            "error": "Authentication required", 
-            "message": "Please authenticate with Basecamp first. Visit http://localhost:8000 to log in."
-        }
+        return _error_response(
+            "OAuth token expired",
+            "Your Basecamp OAuth token has expired. Please re-authenticate by visiting http://localhost:8000 and completing the OAuth flow again.",
+        )
+    return _error_response(
+        "Authentication required",
+        "Please authenticate with Basecamp first. Visit http://localhost:8000 to log in.",
+    )
 
 async def _run_sync(func, *args, **kwargs):
     """Wrapper to run synchronous functions in thread pool."""
     return await anyio.to_thread.run_sync(func, *args, **kwargs)
+
+
+def _handle_download_error(e: Exception, kind: str) -> Dict[str, Any]:
+    """Map a BasecampClient download exception to an MCP error response."""
+    logger.error(f"Error downloading {kind}: {e}")
+    if "401" in str(e) and "expired" in str(e).lower():
+        return _error_response(
+            "OAuth token expired",
+            "Your Basecamp OAuth token expired during the API call. Re-authenticate via this server's OAuth endpoint.",
+        )
+    return _error_response("Execution error", str(e))
+
+
+def _serialize_blob_for_mcp(
+    data: bytes,
+    content_type: str,
+    filename: str,
+    summary: str,
+    resource_uri: str,
+) -> List[Any]:
+    """Pack a downloaded file into MCP content blocks.
+
+    ``image/*`` MIME types come back as ``ImageContent`` (the MCP host can
+    render them); everything else as an ``EmbeddedResource`` with
+    ``BlobResourceContents`` so the MCP host forwards the bytes to the model
+    and PDFs/docs are read natively.
+    """
+    b64 = base64.b64encode(data).decode("ascii")
+    blocks: List[Any] = [TextContent(type="text", text=summary)]
+    if content_type.startswith("image/"):
+        blocks.append(
+            ImageContent(type="image", data=b64, mimeType=content_type)
+        )
+    else:
+        blocks.append(
+            EmbeddedResource(
+                type="resource",
+                resource=BlobResourceContents(
+                    uri=resource_uri,
+                    mimeType=content_type,
+                    blob=b64,
+                ),
+            )
+        )
+    return blocks
+
 
 # Core MCP Tools - Starting with essential ones from original server
 
@@ -825,7 +886,8 @@ async def get_message_categories(project_id: str) -> Dict[str, Any]:
 @mcp.tool()
 async def create_message(project_id: str, subject: str, content: str,
                          message_board_id: Optional[str] = None,
-                         category_id: Optional[str] = None) -> Dict[str, Any]:
+                         category_id: Optional[str] = None,
+                         publish: bool = True) -> Dict[str, Any]:
     """Create a new message on a project's message board.
 
     Args:
@@ -834,6 +896,7 @@ async def create_message(project_id: str, subject: str, content: str,
         content: Message body in HTML format
         message_board_id: Optional message board ID. If not provided, will be auto-discovered from the project.
         category_id: Optional message type/category ID
+        publish: When true, publish immediately. When false, create a draft.
     """
     client = _get_basecamp_client()
     if not client:
@@ -844,25 +907,46 @@ async def create_message(project_id: str, subject: str, content: str,
             lambda: client.create_message(
                 project_id, subject, content,
                 message_board_id=message_board_id,
-                category_id=category_id
+                category_id=category_id,
+                status="active" if publish else None
             )
         )
         return {
             "status": "success",
             "message": message,
-            "result": f"Message '{subject}' created successfully"
+            "result": f"Message '{subject}' {'published' if publish else 'drafted'} successfully"
         }
     except Exception as e:
         logger.error(f"Error creating message: {e}")
         if "401" in str(e) and "expired" in str(e).lower():
-            return {
-                "error": "OAuth token expired",
-                "message": "Your Basecamp OAuth token expired during the API call. Please re-authenticate by visiting http://localhost:8000 and completing the OAuth flow again."
-            }
-        return {
-            "error": "Execution error",
-            "message": str(e)
-        }
+            return _error_response(
+                "OAuth token expired",
+                "Your Basecamp OAuth token expired during the API call. Please re-authenticate by visiting http://localhost:8000 and completing the OAuth flow again.",
+            )
+        return _error_response("Execution error", str(e))
+
+
+@mcp.tool()
+async def create_draft_message(project_id: str, subject: str, content: str,
+                               message_board_id: Optional[str] = None,
+                               category_id: Optional[str] = None) -> Dict[str, Any]:
+    """Create a draft message on a project's message board without publishing it.
+
+    Args:
+        project_id: The project ID
+        subject: Message title/subject
+        content: Message body in HTML format
+        message_board_id: Optional message board ID. If not provided, will be auto-discovered from the project.
+        category_id: Optional message type/category ID
+    """
+    return await create_message(
+        project_id,
+        subject,
+        content,
+        message_board_id=message_board_id,
+        category_id=category_id,
+        publish=False,
+    )
 
 
 # Inbox Tools (Email Forwards)
@@ -2153,7 +2237,8 @@ async def get_document(project_id: str, document_id: str) -> Dict[str, Any]:
         }
 
 @mcp.tool()
-async def create_document(project_id: str, vault_id: str, title: str, content: str) -> Dict[str, Any]:
+async def create_document(project_id: str, vault_id: str, title: str, content: str,
+                          publish: bool = True) -> Dict[str, Any]:
     """Create a document in a vault.
     
     Args:
@@ -2161,28 +2246,53 @@ async def create_document(project_id: str, vault_id: str, title: str, content: s
         vault_id: Vault ID
         title: Document title
         content: Document HTML content
+        publish: When true, publish immediately. When false, create a draft.
     """
     client = _get_basecamp_client()
     if not client:
         return _get_auth_error_response()
     
     try:
-        doc = await _run_sync(client.create_document, project_id, vault_id, title, content)
+        doc = await _run_sync(
+            client.create_document,
+            project_id,
+            vault_id,
+            title,
+            content,
+            "active" if publish else None,
+        )
         return {
             "status": "success",
-            "document": doc
+            "document": doc,
+            "result": f"Document '{title}' {'published' if publish else 'drafted'} successfully"
         }
     except Exception as e:
         logger.error(f"Error creating document: {e}")
         if "401" in str(e) and "expired" in str(e).lower():
-            return {
-                "error": "OAuth token expired",
-                "message": "Your Basecamp OAuth token expired during the API call. Please re-authenticate by visiting http://localhost:8000 and completing the OAuth flow again."
-            }
-        return {
-            "error": "Execution error",
-            "message": str(e)
-        }
+            return _error_response(
+                "OAuth token expired",
+                "Your Basecamp OAuth token expired during the API call. Please re-authenticate by visiting http://localhost:8000 and completing the OAuth flow again.",
+            )
+        return _error_response("Execution error", str(e))
+
+
+@mcp.tool()
+async def create_draft_document(project_id: str, vault_id: str, title: str, content: str) -> Dict[str, Any]:
+    """Create a draft document in a vault without publishing it.
+
+    Args:
+        project_id: Project ID
+        vault_id: Vault ID
+        title: Document title
+        content: Document HTML content
+    """
+    return await create_document(
+        project_id,
+        vault_id,
+        title,
+        content,
+        publish=False,
+    )
 
 @mcp.tool()
 async def update_document(project_id: str, document_id: str, title: Optional[str] = None, content: Optional[str] = None) -> Dict[str, Any]:
@@ -2281,7 +2391,7 @@ async def get_uploads(project_id: str, vault_id: Optional[str] = None) -> Dict[s
 @mcp.tool()
 async def get_upload(project_id: str, upload_id: str) -> Dict[str, Any]:
     """Get details for a specific upload.
-    
+
     Args:
         project_id: Project ID
         upload_id: Upload ID
@@ -2289,7 +2399,7 @@ async def get_upload(project_id: str, upload_id: str) -> Dict[str, Any]:
     client = _get_basecamp_client()
     if not client:
         return _get_auth_error_response()
-    
+
     try:
         upload = await _run_sync(client.get_upload, project_id, upload_id)
         return {
@@ -2307,6 +2417,129 @@ async def get_upload(project_id: str, upload_id: str) -> Dict[str, Any]:
             "error": "Execution error",
             "message": str(e)
         }
+
+@mcp.tool()
+async def download_upload(
+    project_id: str,
+    upload_id: str,
+    max_bytes: int = 25_000_000,
+) -> Any:
+    """Download the binary content of an upload (PDF, image, document, ...).
+
+    Returns MCP content blocks: a text summary plus the file itself as an
+    embedded resource (or ImageContent for image MIME types). The MCP host
+    forwards the blob to the model, so Claude reads PDFs natively (tables,
+    images, OCR).
+
+    Host compatibility: the file is only readable if the MCP host forwards
+    `ImageContent` / `EmbeddedResource` (`BlobResourceContents`) to the
+    model. Claude Code (CLI) supports both, including `application/pdf`.
+    Claude Desktop / claude.ai web currently rejects non-image
+    `EmbeddedResource` blocks ("Resources of type 'application/pdf' are
+    not currently supported"); the bytes arrive at the host but never
+    reach the model.
+
+    Args:
+        project_id: Project ID
+        upload_id: Upload ID
+        max_bytes: Reject files larger than this (default 25 MB). Very large
+            payloads stress the MCP transport and the model context.
+    """
+    client = _get_basecamp_client()
+    if not client:
+        return _get_auth_error_response()
+
+    try:
+        result = await _run_sync(
+            client.download_upload, project_id, upload_id, max_bytes
+        )
+    except Exception as e:
+        return _handle_download_error(e, "upload")
+
+    filename = result["filename"] or f"upload-{upload_id}"
+    data = result["data"]
+    content_type = result["content_type"]
+    return _serialize_blob_for_mcp(
+        data=data,
+        content_type=content_type,
+        filename=filename,
+        summary=(
+            f"Downloaded '{filename}' ({content_type}, {len(data)} bytes) "
+            f"from upload {upload_id} in project {project_id}."
+        ),
+        resource_uri=(
+            f"basecamp://buckets/{project_id}/uploads/{upload_id}/{filename}"
+        ),
+    )
+
+@mcp.tool()
+async def download_attachment(
+    project_id: str,
+    download_url: str,
+    max_bytes: int = 25_000_000,
+    expected_byte_size: Optional[int] = None,
+) -> Any:
+    """Download an inline comment/message attachment as MCP content.
+
+    Use this for files embedded into a comment or message body — the entries
+    found in ``content_attachments[]`` on comments, messages, etc. Pass the
+    entry's ``download_url`` verbatim.
+
+    For files that are their own ``Upload`` recording in a vault ("Docs &
+    Files"), use ``download_upload`` instead. Inline attachments are
+    ``Attachment`` objects with their own IDs and cannot be resolved through
+    the uploads endpoint.
+
+    Returns MCP content blocks: a text summary plus the file itself as
+    ImageContent (for ``image/*`` MIME types) or an EmbeddedResource
+    (BlobResourceContents) for everything else.
+
+    Host compatibility: the file is only readable if the MCP host forwards
+    ``ImageContent`` / ``EmbeddedResource`` (``BlobResourceContents``) to
+    the model. Claude Code (CLI) supports both, including
+    ``application/pdf``. Claude Desktop / claude.ai web currently rejects
+    non-image ``EmbeddedResource`` blocks ("Resources of type
+    'application/pdf' are not currently supported"); the bytes arrive at
+    the host but never reach the model.
+
+    Args:
+        project_id: Project (bucket) ID — used for the resource URI and logs.
+        download_url: ``content_attachments[].download_url`` from the API
+            (must point to ``*.basecampapi.com``).
+        max_bytes: Reject files larger than this (default 25 MB).
+        expected_byte_size: Optional advertised ``byte_size`` from the same
+            ``content_attachments[]`` entry. When provided, lets the server
+            reject oversized files before issuing the download.
+    """
+    client = _get_basecamp_client()
+    if not client:
+        return _get_auth_error_response()
+
+    try:
+        result = await _run_sync(
+            client.download_attachment,
+            download_url,
+            max_bytes,
+            expected_byte_size,
+        )
+    except Exception as e:
+        return _handle_download_error(e, "attachment")
+
+    filename = result["filename"] or "attachment"
+    data = result["data"]
+    content_type = result["content_type"]
+    return _serialize_blob_for_mcp(
+        data=data,
+        content_type=content_type,
+        filename=filename,
+        summary=(
+            f"Downloaded '{filename}' ({content_type}, {len(data)} bytes) "
+            f"from inline attachment in project {project_id}."
+        ),
+        resource_uri=(
+            f"basecamp://buckets/{project_id}/attachments/{filename}"
+        ),
+    )
 
 @mcp.tool()
 async def get_todolist(project_id: str, todolist_id: str) -> Dict[str, Any]:
@@ -2509,4 +2742,4 @@ async def reposition_todolist_group(
 if __name__ == "__main__":
     logger.info("Starting Basecamp FastMCP server")
     # Run using official MCP stdio transport
-    mcp.run(transport='stdio') 
+    mcp.run(transport='stdio')

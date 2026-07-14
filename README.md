@@ -7,21 +7,21 @@
 
 An MCP server for Basecamp 3. It lets MCP-capable clients such as Codex, Cursor, and Claude Desktop read and manage Basecamp projects through OAuth-authenticated Basecamp API calls.
 
-The main server is [`basecamp_fastmcp.py`](basecamp_fastmcp.py). It uses the official `mcp.server.fastmcp` Python SDK and exposes 75 tools covering projects, todos, message boards, campfires, card tables, inbox forwards, documents, uploads, comments, events, webhooks, and search.
+The main server is [`basecamp_fastmcp.py`](basecamp_fastmcp.py). It uses the official `mcp.server.fastmcp` Python SDK and exposes 79 tools covering projects, todos, message boards, campfires, card tables, inbox forwards, documents, uploads, comments, events, webhooks, and search.
 
 ## What It Can Do
 
 - Browse Basecamp projects and project details.
 - Search across projects, todos, messages, campfire lines, comments, uploads, and schedules.
 - Read and manage todolists, todos, todo groups, and completion state.
-- Read and post message board messages, including categories.
+- Read and create message board messages, including drafts and categories.
 - Read campfire lines.
 - Read and create comments.
 - Work with card tables, columns, cards, and card steps.
 - Read inbox forwards and replies.
 - Read daily check-ins and answers.
 - Upload attachments and inspect uploads.
-- Read and manage documents.
+- Read and manage documents, including drafts.
 - List events and manage webhooks.
 - Generate local MCP configuration for Codex, Cursor, and Claude Desktop.
 
@@ -134,7 +134,7 @@ python -m pytest tests/ -v
 
 ## Available Tools
 
-The FastMCP server exposes 75 tools.
+The FastMCP server exposes 79 tools.
 
 ### Projects And Search
 
@@ -170,6 +170,12 @@ The FastMCP server exposes 75 tools.
 - `get_message`
 - `get_message_categories`
 - `create_message`
+- `create_draft_message`
+
+Pass `publish: false` to `create_message` to create a draft message instead
+of posting it immediately. Agents can also call `create_draft_message` directly
+when the intended operation is specifically to create a draft.
+
 - `get_campfire_lines`
 - `get_daily_check_ins`
 - `get_question_answers`
@@ -222,9 +228,39 @@ The FastMCP server exposes 75 tools.
 - `create_attachment`
 - `get_uploads`
 - `get_upload`
+- `download_upload` — download a vault Upload recording (Docs & Files) and
+  return its bytes as MCP content (``ImageContent`` for image MIME types,
+  ``EmbeddedResource`` / ``BlobResourceContents`` otherwise). The MCP host
+  forwards the blob to the model, so PDFs, images, and documents are read
+  natively without an out-of-band fetch.
+- `download_attachment` — download an inline comment/message attachment by its
+  ``content_attachments[].download_url`` and return it as MCP content. Use this
+  for files embedded into a comment or message body. Inline attachments are
+  ``Attachment`` objects with their own IDs and cannot be resolved through
+  ``/uploads/{id}`` — that endpoint returns 404. For files that are their own
+  Upload recording in a vault, use ``download_upload`` instead.
+
+> **Host compatibility for `download_upload` and `download_attachment`.**
+> Both tools return MCP content blocks. The file is only readable by the
+> model if the MCP host forwards `ImageContent` / `EmbeddedResource`
+> (`BlobResourceContents`) on. Status as of June 2026:
+>
+> - **Claude Code (CLI)** — fully supported, including `application/pdf`
+>   and other binary blob resources.
+> - **Claude Desktop / claude.ai web** — image content blocks work, but
+>   non-image `EmbeddedResource` blocks are rejected with `"Resources of
+>   type 'application/pdf' are not currently supported"`. The bytes reach
+>   the host but never the model. Once the client adds support, these
+>   tools become useful in those frontends without server changes.
 - `get_documents`
 - `get_document`
 - `create_document`
+- `create_draft_document`
+
+Pass `publish: false` to `create_document` to create a draft document instead
+of publishing it immediately. Agents can also call `create_draft_document`
+directly when the intended operation is specifically to create a draft.
+
 - `update_document`
 - `trash_document`
 - `get_events`
@@ -243,6 +279,7 @@ The FastMCP server exposes 75 tools.
 - "Show me the card table columns for project 123456."
 - "Move this card to the Done column."
 - "List the latest uploads in this project's vault."
+- "Download the screenshot attached to that comment so you can read it."
 
 ## Architecture
 
