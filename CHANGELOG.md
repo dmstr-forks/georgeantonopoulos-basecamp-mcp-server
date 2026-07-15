@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format is based on 
 
 ### Added
 
+- `completed` and `status` parameters for `get_todos`. The Basecamp to-dos
+  endpoint returns only the active (incomplete) to-dos by default; callers can
+  now pass `completed: true` to fetch the completed to-dos, or
+  `status: "archived"`/`"trashed"` to fetch by recording status. The params are
+  threaded through the existing `get_all_pages()` pagination, so completed sets
+  are returned in full rather than only the first page.
 - `publish` option for `create_message` and `create_document`. The tools still
   publish immediately by default, and callers can pass `publish: false` to omit
   `status: "active"` and create a Basecamp draft instead.
