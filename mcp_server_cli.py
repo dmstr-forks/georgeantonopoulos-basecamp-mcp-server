@@ -89,12 +89,14 @@ class MCPServer:
             },
             {
                 "name": "get_todos",
-                "description": "Get todos from a todo list",
+                "description": "Get todos from a todo list. Returns active (incomplete) to-dos by default; set completed=true for completed to-dos, or status='archived'/'trashed' to filter by recording status.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "project_id": {"type": "string", "description": "Project ID"},
                         "todolist_id": {"type": "string", "description": "The todo list ID"},
+                        "completed": {"type": "boolean", "description": "When true, return completed to-dos instead of the default active set"},
+                        "status": {"type": "string", "enum": ["archived", "trashed"], "description": "Optional recording-status filter"},
                     },
                     "required": ["project_id", "todolist_id"]
                 }
@@ -988,7 +990,9 @@ class MCPServer:
             elif tool_name == "get_todos":
                 todolist_id = arguments.get("todolist_id")
                 project_id = arguments.get("project_id")
-                todos = client.get_todos(project_id, todolist_id)
+                completed = arguments.get("completed", False)
+                status = arguments.get("status")
+                todos = client.get_todos(project_id, todolist_id, completed, status)
                 return {
                     "status": "success",
                     "todos": todos,

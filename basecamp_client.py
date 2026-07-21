@@ -315,16 +315,43 @@ class BasecampClient:
             raise Exception(f"Failed to trash todolist: {response.status_code} - {response.text}")
 
     # To-do methods
-    def get_todos(self, project_id, todolist_id):
-        """Get all todos in a todolist, handling pagination.
+    def get_todos(self, project_id, todolist_id, completed=None, status=None):
+        """Get todos in a todolist, handling pagination.
 
         Basecamp paginates list endpoints (commonly 15 items per page). This
         implementation follows pagination via the `page` query parameter and
         the HTTP `Link` header if present, aggregating all pages before
         returning the combined list.
+
+        By default the Basecamp API returns only the active (incomplete)
+        to-dos. Use `completed` to fetch the completed ones instead, or
+        `status` to fetch archived/trashed to-dos.
+        See https://github.com/basecamp/bc3-api/blob/master/sections/todos.md.
+
+        Args:
+            project_id (str): Project ID
+            todolist_id (str): Todo list ID
+            completed (bool, optional): When True, return completed to-dos
+                (Basecamp's `?completed=true`). When False/None the default
+                active set is returned.
+            status (str, optional): Recording-status filter — 'archived' or
+                'trashed' (Basecamp's `?status=...`).
+
+        Returns:
+            list: All matching todos across all pages.
         """
+        params = {}
+        if completed:
+            params['completed'] = 'true'
+        if status is not None:
+            if status not in ('archived', 'trashed'):
+                raise ValueError(
+                    "status must be 'archived' or 'trashed', got "
+                    f"{status!r}")
+            params['status'] = status
         return self.get_all_pages(
             f'buckets/{project_id}/todolists/{todolist_id}/todos.json',
+            params=params or None,
             error_label="todos")
 
     def get_todo(self, project_id, todo_id):
