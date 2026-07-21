@@ -8,10 +8,10 @@ import sys
 import time
 import pytest
 from unittest.mock import patch, Mock
-import token_storage
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
+import token_storage
 from mcp_server_cli import MCPServer
 
 def test_cli_server_initialize():
